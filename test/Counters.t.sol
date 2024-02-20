@@ -1,26 +1,30 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import {Test, console2} from "forge-std/Test.sol";
-import {Counter1, Counter2, Counter1Factory, Counter1967Proxy, CounterTransparent} from "../src/Counters.sol";
-import "openzeppelin-contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import "openzeppelin-contracts/proxy/transparent/ProxyAdmin.sol";
+import "forge-std/Test.sol";
+import "src/Counters.sol";
+import "openzeppelin/proxy/transparent/TransparentUpgradeableProxy.sol";
+import "openzeppelin/proxy/transparent/ProxyAdmin.sol";
 
 
 contract CounterTest is Test {
     address deployer = address(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496);
     Counter1 public c1;
     Counter2 public c2;
-    Counter1Factory public f1;
-    Counter1967Proxy public c1967Proxy;
-    CounterTransparent public cT;
+    Counter1UUPSImplementation public c1UUPSImpl;
+    Counter2UUPSImplementation public c2UUPSImpl;
+    Counter1_Factory public f1;
+    Counter_TransparentProxy public cT;
+    Counter_UUPSProxy public cUUPSProxy;
 
     function setUp() public {
         c1 = new Counter1();
         c2 = new Counter2();
-        f1 = new Counter1Factory();
-        c1967Proxy = new Counter1967Proxy(address(c1),"");
-        cT = new CounterTransparent(address(c1),deployer,"");
+        c1UUPSImpl = new Counter1UUPSImplementation();
+        c2UUPSImpl = new Counter2UUPSImplementation();
+        f1 = new Counter1_Factory();
+        cT = new Counter_TransparentProxy(address(c1),deployer,"");
+        cUUPSProxy = new Counter_UUPSProxy(address(c1UUPSImpl),"");
     }
 
     function test_Clones() public {
@@ -32,31 +36,15 @@ contract CounterTest is Test {
         assertEq(c.x(), 100);
     }
 
-    function test_Counter1967Proxy() public {
-        (bool ok,) = address(c1967Proxy).call(abi.encodeWithSignature("increment()"));
-        require(ok,"increment() failed");
-        (,bytes memory data) = address(c1967Proxy).call(abi.encodeWithSignature("x()"));
-        uint256 x = uint256(bytes32(data));
-        assertEq(x, 1);
-
-        (bool upgraded,) = address(c1967Proxy).call(abi.encodeWithSignature("upgrade(address)",address(c2)));
-        require(upgraded,"upgrade to c2 failed");
-        
-        (bool ok1,) = address(c1967Proxy).call(abi.encodeWithSignature("increment_x()"));
-        require(ok1,"increment() failed");
-        address(c1967Proxy).call(abi.encodeWithSignature("increment_y()"));
-        (,bytes memory total) = address(c1967Proxy).call(abi.encodeWithSignature("total()"));
-        uint256 amt = uint256(bytes32(total));
-        assertEq(amt, 5);
-    }
-
-    function test_CounterTransparent() public {
-        assertEq(cT.x(), 0);
+    function test_CounterTransparentProxy() public {
+        (,bytes memory x) = address(cT).call(abi.encodeWithSignature("x()"));
+        uint256 x1 = abi.decode(x,(uint256));
+        assertEq(x1, 0);
         (bool ok,) = address(cT).call(abi.encodeWithSignature("increment()"));
         require(ok,"increment() failed");
         (,bytes memory data) = address(cT).call(abi.encodeWithSignature("x()"));
-        uint256 x = uint256(bytes32(data));
-        assertEq(x, 1);
+        uint256 x2 = abi.decode(data,(uint256));
+        assertEq(x2, 1);
 
         address admin = cT.whoAdmin();
         vm.prank(deployer);
@@ -65,10 +53,40 @@ contract CounterTest is Test {
         
         (bool ok1,) = address(cT).call(abi.encodeWithSignature("increment_x()"));
         require(ok1,"increment() failed");
-        address(cT).call(abi.encodeWithSignature("increment_y()"));
+        (bool increased,) = address(cT).call(abi.encodeWithSignature("increment_y()"));
+        require(increased);
         (,bytes memory total) = address(cT).call(abi.encodeWithSignature("total()"));
         uint256 amt = uint256(bytes32(total));
         assertEq(amt, 5);
     }    
+
+    function test_CounterUUPSProxy() public {
+        //test c1UUPSImpl functions
+        (,bytes memory data) = address(cUUPSProxy).call(abi.encodeWithSignature("x()"));
+        uint256 x = abi.decode(data,(uint256));
+        assertEq(x,0);
+        (bool success,) = address(cUUPSProxy).call(abi.encodeWithSignature("setX(uint256)",50));
+        require(success);
+        (bool success1,) = address(cUUPSProxy).call(abi.encodeWithSignature("increment()"));
+        require(success1);
+        (,bytes memory data1) = address(cUUPSProxy).call(abi.encodeWithSignature("x()"));
+        uint256 x1 = abi.decode(data1,(uint256));
+        assertEq(x1,51);
+
+        //upgrade to c2UUPSImpl 
+        (bool success2,) = address(cUUPSProxy).call(abi.encodeWithSignature("upgradeToAndCall(address,bytes)",address(c2UUPSImpl),""));
+        require(success2);
+
+        //test c2UUPSImpl functions
+        (,bytes memory data2) = address(cUUPSProxy).call(abi.encodeWithSignature("x()"));
+        uint256 x2 = abi.decode(data2,(uint256));
+        assertEq(x2,51);
+        (bool success3,) = address(cUUPSProxy).call(abi.encodeWithSignature("increment_x()"));
+        require(success3);
+        (,bytes memory data3) = address(cUUPSProxy).call(abi.encodeWithSignature("x()"));
+        uint256 x3 = abi.decode(data3,(uint256));
+        assertEq(x3,53);
+
+    }
 }
 
